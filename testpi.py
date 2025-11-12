@@ -71,4 +71,4 @@ if __name__ == '__main__':
     # Start capture in background
     threading.Thread(target=capture_loop, daemon=True).start()
     time.sleep(2)                 # give camera time to init
-    app.run(host='0.0.0.0', port=5000, threaded=True)
+    app.run(host='0.0.0.0', port=9999, threaded=True)
