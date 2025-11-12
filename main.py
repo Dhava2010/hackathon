@@ -1,11 +1,11 @@
-# main.py  (FINAL VERSION - WORKS 100%)
+
 import cv2
 import numpy as np
 import time
 import socket
 import os
 
-# --- AUTO-KILL ANY PROCESS USING CAMERA ---
+
 os.system("sudo lsof /dev/video0 2>/dev/null | grep video0 | awk '{print $2}' | xargs -r sudo kill -9 2>/dev/null")
 print("Camera freed from other processes")
 
@@ -13,14 +13,14 @@ from detection import detect_targets
 from crossing import check_crossing
 from firing import init_servo, fire_gun
 
-# --- OPEN CAMERA (EXACTLY LIKE test.py) ---
+
 def open_camera():
-    cap = cv2.VideoCapture(0)  # Let OpenCV pick backend
+    cap = cv2.VideoCapture(0)  
     fourcc = cv2.VideoWriter_fourcc(*'MJPG')
     cap.set(cv2.CAP_PROP_FOURCC, fourcc)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Critical!
+    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1) 
 
     print("Opening camera... (2s warm-up)")
     time.sleep(2)
@@ -34,7 +34,7 @@ def open_camera():
 
 cap = open_camera()
 
-# --- GET FIRST FRAME ---
+
 def get_first_frame():
     print("Waiting for first frame...")
     for i in range(50):
@@ -49,14 +49,12 @@ frame = get_first_frame()
 h, w = frame.shape[:2]
 print(f"CAMERA READY → {w}×{h}")
 
-# --- SETUP ---
 line_x = int(w * 0.75)
 servo = init_servo(18)
 COOLDOWN = 3.0
 last_fire = 0.0
 prev_targets = []
 
-# --- STREAMING SERVER ---
 server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
 server.bind(('0.0.0.0', 5000))
@@ -65,7 +63,7 @@ server.settimeout(0.1)
 conn = None
 print("Streaming on port 5000")
 
-# --- MAIN LOOP ---
+
 while True:
     ret, frame = cap.read()
     if not ret:
@@ -87,7 +85,6 @@ while True:
 
     prev_targets = targets
 
-    # --- STREAM ---
     if conn is None:
         try:
             conn, addr = server.accept()
