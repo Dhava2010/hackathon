@@ -1,22 +1,33 @@
 from flask import Flask, Response
 import cv2
+import time
 
 app = Flask(__name__)
 
 camera = cv2.VideoCapture(0)
+camera.set(cv2.CAP_PROP_FPS, 15)
 
 def generate_frames():
+    fps_limit = 15
+    frame_time = 1.0 / fps_limit
+    last_frame_time = 0
+
     while True:
         success, frame = camera.read()
         if not success:
             break
-        else:
+        
+        now = time.time()
+        if now - last_frame_time < frame_time:
+            time.sleep(frame_time - (now - last_frame_time))
+        
+        last_frame_time = time.time()
 
-            ret, buffer = cv2.imencode('.jpg', frame)
-            frame = buffer.tobytes()
+        ret, buffer = cv2.imencode('.jpg', frame)
+        frame = buffer.tobytes()
 
-            yield (b'--frame\r\n'
-                   b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
+        yield (b'--frame\r\n'
+               b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
 
 @app.route('/video')
 def video_feed():
