@@ -1,6 +1,4 @@
-# detection.py
-# This file handles detecting circular green targets using OpenCV.
-# It converts the frame to HSV, masks green, finds contours, and filters for circularity.
+
 
 import cv2
 import numpy as np
