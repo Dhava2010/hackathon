@@ -5,10 +5,10 @@ import time
 app = Flask(__name__)
 
 camera = cv2.VideoCapture(0)
-camera.set(cv2.CAP_PROP_FPS, 15)
+camera.set(cv2.CAP_PROP_FPS, 5)
 
 def generate_frames():
-    fps_limit = 15
+    fps_limit = 5
     frame_time = 1.0 / fps_limit
     last_frame_time = 0
 
@@ -40,3 +40,5 @@ def index():
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080, debug=False)
+
+can you downscale the resolution? to like 360p or ike 240p? whatever best for performenace
