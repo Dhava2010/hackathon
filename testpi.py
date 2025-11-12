@@ -1,47 +1,33 @@
-# pi_stream_server.py
+from flask import Flask, Response
 import cv2
-import socket
-import struct
-import pickle
 
-# Open Pi camera
-pipeline = (
-    "libcamerasrc ! "
-    "video/x-raw,width=640,height=480,framerate=30/1 ! "
-    "videoconvert ! appsink"
-)
-cap = cv2.VideoCapture(pipeline, cv2.CAP_GSTREAMER)
-if not cap.isOpened():
-    print("ERROR: Cannot open camera!")
-    exit(1)
+app = Flask(__name__)
 
-# Create TCP socket
-server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-server_socket.bind(('0.0.0.0', 8485))  # listen on port 8485
-server_socket.listen(1)
-print("📸 Waiting for connection on port 8485...")
+# Open USB camera (usually /dev/video0)
+camera = cv2.VideoCapture(0)
 
-conn, addr = server_socket.accept()
-print(f"✅ Connected to {addr}")
-
-try:
+def generate_frames():
     while True:
-        ret, frame = cap.read()
-        if not ret:
-            continue
+        success, frame = camera.read()
+        if not success:
+            break
+        else:
+            # Encode frame as JPEG
+            ret, buffer = cv2.imencode('.jpg', frame)
+            frame = buffer.tobytes()
+            # Yield frame in HTTP multipart stream
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + frame + b'\r\n')
 
-        # Encode frame as JPEG to save bandwidth
-        _, buffer = cv2.imencode('.jpg', frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+@app.route('/video')
+def video_feed():
+    return Response(generate_frames(),
+                    mimetype='multipart/x-mixed-replace; boundary=frame')
 
-        # Serialize using pickle
-        data = pickle.dumps(buffer)
+@app.route('/')
+def index():
+    return '<h1>Raspberry Pi Camera Stream</h1><img src="/video" width="640" />'
 
-        # Pack message length before data
-        message_size = struct.pack(">L", len(data))
-        conn.sendall(message_size + data)
-except Exception as e:
-    print("❌ Stream stopped:", e)
-finally:
-    conn.close()
-    server_socket.close()
-    cap.release()
+if __name__ == '__main__':
+    # Host on all interfaces (so you can access it via Pi's IP)
+    app.run(host='0.0.0.0', port=8080, debug=False)
