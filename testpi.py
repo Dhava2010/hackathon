@@ -41,4 +41,3 @@ def index():
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=8080, debug=False)
 
-can you downscale the resolution? to like 360p or ike 240p? whatever best for performenace
