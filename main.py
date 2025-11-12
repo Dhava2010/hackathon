@@ -1,9 +1,10 @@
 # main.py
-# This is the main script that runs on the Raspberry Pi.
-# It integrates detection, crossing check, and firing.
-# It also draws bounding boxes and the mental line on the frame.
-# Sets up a socket server to stream processed frames to the PC viewer.
-# Run this on the Raspberry Pi with Ubuntu.
+# Updated to address camera reading issues:
+# - Use CAP_V4L2 backend explicitly.
+# - Set FOURCC to MJPG for better compatibility with USB webcams.
+# - Set a reasonable resolution.
+# - Add a short delay and initial reads to warm up the camera.
+# - Loop with timeout for initial frame read.
 
 import cv2
 import numpy as np
@@ -13,17 +14,40 @@ from detection import detect_targets
 from crossing import check_crossing
 from firing import init_servo, fire_gun
 
-# Initialize video capture (USB camera)
-cap = cv2.VideoCapture(0)
+# Initialize video capture with V4L2 backend
+cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
 if not cap.isOpened():
     print("Error: Could not open camera.")
     exit()
 
-# Get frame dimensions
-ret, frame = cap.read()
-if not ret:
-    print("Error: Could not read frame.")
+# Set codec to MJPG for USB cameras
+cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
+# Set resolution (adjust if needed based on camera capabilities)
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+
+# Warm up the camera
+time.sleep(2)
+for _ in range(10):
+    cap.read()
+
+# Attempt to read initial frame with timeout
+start_time = time.time()
+while time.time() - start_time < 10:
+    ret, frame = cap.read()
+    if ret:
+        break
+    time.sleep(0.1)
+else:
+    print("Error: Timeout waiting for initial frame.")
+    cap.release()
     exit()
+
+if not ret:
+    print("Error: Could not read initial frame.")
+    cap.release()
+    exit()
+
 height, width, _ = frame.shape
 
 # Mental line position (adjust based on gun aiming, e.g., bottom left/right)
@@ -52,7 +76,8 @@ print("Starting main loop. Connect viewer from PC to port 5000.")
 while True:
     ret, frame = cap.read()
     if not ret:
-        break
+        print("Warning: Failed to read frame. Skipping.")
+        continue
 
     # Detect targets
     current_targets = detect_targets(frame)
