@@ -1,11 +1,7 @@
-# main.py
-# Updated to address camera reading issues:
-# - Use CAP_V4L2 backend explicitly.
-# - Set FOURCC to MJPG for better compatibility with USB webcams.
-# - Set a reasonable resolution.
-# - Add a short delay and initial reads to warm up the camera.
-# - Loop with timeout for initial frame read.
-
+# main.py  (run on the Raspberry Pi)
+# -------------------------------------------------
+#  CAMERA INITIALISATION – COPY-PASTE FROM YOUR WORKING test_camera.py
+# -------------------------------------------------
 import cv2
 import numpy as np
 import time
@@ -14,111 +10,121 @@ from detection import detect_targets
 from crossing import check_crossing
 from firing import init_servo, fire_gun
 
-# Initialize video capture with V4L2 backend
-cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
-if not cap.isOpened():
-    print("Error: Could not open camera.")
-    exit()
+def open_camera():
+    cap = cv2.VideoCapture(0)                     # same as test_camera.py
+    cap.set(cv2.CAP_PROP_FOURCC,
+            cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))   # force MJPG
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH,  640)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
-# Set codec to MJPG for USB cameras
-cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
-# Set resolution (adjust if needed based on camera capabilities)
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    print("Opening camera... (2-second warm-up)")
+    time.sleep(2)                                 # same warm-up
+    return cap
 
-# Warm up the camera
-time.sleep(2)
-for _ in range(10):
-    cap.read()
+# -------------------------------------------------
+#  OPEN CAMERA + FIRST FRAME (with timeout)
+# -------------------------------------------------
+cap = open_camera()
+def read_first_frame(timeout=10):
+    start = time.time()
+    while time.time() - start < timeout:
+        ret, frame = cap.read()
+        if ret:
+            return frame
+        time.sleep(0.05)
+    raise RuntimeError("Timeout – no frame from camera")
+frame = read_first_frame()
+height, width = frame.shape[:2]
+print(f"Camera OK → {width}×{height}")
 
-# Attempt to read initial frame with timeout
-start_time = time.time()
-while time.time() - start_time < 10:
-    ret, frame = cap.read()
-    if ret:
-        break
-    time.sleep(0.1)
-else:
-    print("Error: Timeout waiting for initial frame.")
-    cap.release()
-    exit()
+# -------------------------------------------------
+#  MENTAL LINE (adjust to where the gun actually hits)
+# -------------------------------------------------
+line_x = int(width * 0.75)          # 75 % of the width – change if needed
+print(f"Mental line at x = {line_x}")
 
-if not ret:
-    print("Error: Could not read initial frame.")
-    cap.release()
-    exit()
-
-height, width, _ = frame.shape
-
-# Mental line position (adjust based on gun aiming, e.g., bottom left/right)
-# Assuming aiming at bottom right; set to a value where targets cross
-line_x = width * 3 // 4  # Example: towards the right; tweak as needed
-
-# Initialize servo
+# -------------------------------------------------
+#  SERVO
+# -------------------------------------------------
 servo = init_servo(18)
 
-# Cooldown tracking
-last_fire_time = 0
-cooldown = 3  # seconds
+# -------------------------------------------------
+#  COOLDOWN & STATE
+# -------------------------------------------------
+COOLDOWN = 3.0
+last_fire = 0.0
+prev_targets = []
 
-# Previous targets for crossing check
-previous_targets = []
-
-# Set up socket server for streaming to PC
+# -------------------------------------------------
+#  STREAMING SERVER (same port 5000)
+# -------------------------------------------------
 server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-server.bind(('0.0.0.0', 5000))  # Listen on all interfaces, port 5000
+server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+server.bind(('0.0.0.0', 5000))
 server.listen(1)
-server.settimeout(0.1)  # Non-blocking accept
+server.settimeout(0.1)
 conn = None
+print("Streaming server ready – run viewer.py on your PC")
 
-print("Starting main loop. Connect viewer from PC to port 5000.")
-
+# -------------------------------------------------
+#  MAIN LOOP
+# -------------------------------------------------
 while True:
     ret, frame = cap.read()
-    if not ret:
-        print("Warning: Failed to read frame. Skipping.")
+    if not ret:                                 # dropped frame → retry
+        print("Warning: dropped frame – trying again")
+        time.sleep(0.01)
         continue
 
-    # Detect targets
-    current_targets = detect_targets(frame)
+    # ---- detection -------------------------------------------------
+    cur_targets = detect_targets(frame)
 
-    # Draw bounding boxes and mental line on a copy for visualization
-    vis_frame = frame.copy()
-    for (x, y, w, h) in current_targets:
-        cv2.rectangle(vis_frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-    cv2.line(vis_frame, (line_x, 0), (line_x, height), (0, 0, 255), 2)
+    # ---- visualisation ---------------------------------------------
+    vis = frame.copy()
+    for (x, y, w, h) in cur_targets:
+        cv2.rectangle(vis, (x, y), (x + w, y + h), (0, 255, 0), 2)
+    cv2.line(vis, (line_x, 0), (line_x, height), (0, 0, 255), 2)
 
-    # Check for crossings if cooldown is over
-    current_time = time.time()
-    if current_time - last_fire_time > cooldown:
-        if check_crossing(current_targets, previous_targets, line_x):
+    # ---- crossing logic --------------------------------------------
+    now = time.time()
+    if now - last_fire > COOLDOWN:
+        if check_crossing(cur_targets, prev_targets, line_x):
             fire_gun(servo)
-            last_fire_time = current_time
-            print("Fired!")
+            last_fire = now
+            print("FIRE!")
 
-    # Update previous targets
-    previous_targets = current_targets
+    prev_targets = cur_targets
 
-    # Handle socket connection and send frame if connected
+    # ---- streaming --------------------------------------------------
     if conn is None:
         try:
             conn, addr = server.accept()
-            print(f"Viewer connected from {addr}")
+            print(f"Viewer connected: {addr}")
         except socket.timeout:
             pass
     if conn:
         try:
-            _, jpg = cv2.imencode('.jpg', vis_frame)
-            size = len(jpg)
-            conn.sendall(size.to_bytes(4, 'big') + jpg.tobytes())
+            _, jpg = cv2.imencode('.jpg', vis,
+                                 [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+            if jpg.size == 0:
+                print("Warning: JPEG encode failed")
+                continue
+            data = jpg.tobytes()
+            conn.sendall(len(data).to_bytes(4, 'big') + data)
         except BrokenPipeError:
             print("Viewer disconnected.")
+            conn.close()
+            conn = None
+        except Exception as e:
+            print(f"Streaming error: {e}")
+            conn.close()
             conn = None
 
-    # Small delay to control frame rate
-    time.sleep(0.03)  # ~30 fps
+    time.sleep(0.03)   # ~30 fps
 
-# Cleanup
+# -------------------------------------------------
+#  CLEANUP
+# -------------------------------------------------
 cap.release()
 if conn:
     conn.close()
