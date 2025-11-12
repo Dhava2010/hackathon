@@ -1,4 +1,10 @@
 # main.py  (run on the Raspberry Pi)
+# Updated to match EXACTLY the working test_camera.py init
+# - No CAP_V4L2 (since it worked without)
+# - Added extra warm-up grabs to flush any bad buffers
+# - Increased first-frame timeout to 30s with more retries
+# - If still fails, print debug info
+
 import cv2
 import numpy as np
 import time
@@ -8,22 +14,21 @@ from crossing import check_crossing
 from firing import init_servo, fire_gun
 
 # -------------------------------------------------
-#  CAMERA: FORCE V4L2 + MJPG + RESOLUTION (same as test_camera.py)
+#  CAMERA: EXACTLY LIKE YOUR WORKING test_camera.py
 # -------------------------------------------------
 def open_camera():
-    # FORCE V4L2 backend – this eliminates GStreamer warnings
-    cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
-
-    # Set format and resolution
+    cap = cv2.VideoCapture(0)  # NO CAP_V4L2 – worked in test
     cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'))
     cap.set(cv2.CAP_PROP_FRAME_WIDTH,  640)
     cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
 
-    # Reduce buffer size to prevent select() timeout
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-
-    print("Opening camera with V4L2 + MJPG... (2-second warm-up)")
+    print("Opening camera... (2-second warm-up)")
     time.sleep(2)
+
+    # Extra: Grab 10 times to warm up and flush buffers
+    for _ in range(10):
+        cap.grab()  # Grab without decode to prime the pump
+
     return cap
 
 # -------------------------------------------------
@@ -32,17 +37,21 @@ def open_camera():
 cap = open_camera()
 
 # -------------------------------------------------
-#  READ FIRST FRAME (with timeout + retry)
+#  READ FIRST FRAME (longer timeout + debug)
 # -------------------------------------------------
-def read_first_frame(timeout=15):
+def read_first_frame(timeout=30):
     start = time.time()
     while time.time() - start < timeout:
         ret, frame = cap.read()
-        if ret and frame is not None:
+        if ret and frame is not None and frame.size > 0:
             return frame
-        print("Waiting for first frame... (retry 5s left)" if (time.time() - start) < 5 else "Still waiting...")
-        time.sleep(0.1)
-    raise RuntimeError("Timeout – camera not delivering frames")
+        print(f"Retry read... ({int(timeout - (time.time() - start))}s left)")
+        time.sleep(0.2)  # Longer sleep for USB settle
+    # Debug if fail
+    print("DEBUG: Camera opened? ", cap.isOpened())
+    print("DEBUG: Get WIDTH: ", cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    print("DEBUG: Get FOURCC: ", cap.get(cv2.CAP_PROP_FOURCC))
+    raise RuntimeError("Timeout – camera accessed (LED green) but no frames. See fixes below.")
 
 print("Waiting for first frame...")
 frame = read_first_frame()
@@ -52,7 +61,7 @@ print(f"CAMERA OK → {width}×{height}")
 # -------------------------------------------------
 #  MENTAL LINE
 # -------------------------------------------------
-line_x = int(width * 0.75)  # adjust if gun hits left/right
+line_x = int(width * 0.75)  # adjust if needed
 print(f"Mental line at x = {line_x}")
 
 # -------------------------------------------------
